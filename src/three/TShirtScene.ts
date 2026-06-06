@@ -436,11 +436,15 @@ export class TShirtScene {
   }
 
   private pickVideoMimeType(): string {
+    // Preferimos MP4 (H.264) si el navegador lo soporta de forma nativa.
     const candidates = [
+      "video/mp4;codecs=avc1.640033",
+      "video/mp4;codecs=avc1.4d002a",
+      "video/mp4;codecs=h264",
+      "video/mp4",
       "video/webm;codecs=vp9",
       "video/webm;codecs=vp8",
       "video/webm",
-      "video/mp4",
     ];
     for (const type of candidates) {
       if (MediaRecorder.isTypeSupported(type)) return type;
@@ -449,12 +453,38 @@ export class TShirtScene {
   }
 
   /** Graba un giro completo (360°) de la camiseta configurada y devuelve el video. */
-  recordVideo(durationMs = 6000, fps = 30): Promise<{ blob: Blob; mimeType: string }> {
+  recordVideo(
+    durationMs = 6000,
+    fps = 60,
+    resolutionLongSide = 2160
+  ): Promise<{ blob: Blob; mimeType: string }> {
     return new Promise((resolve, reject) => {
       if (!TShirtScene.isVideoExportSupported()) {
         reject(new Error("La grabación de video no está soportada en este navegador"));
         return;
       }
+
+      // Subimos la resolución interna de render para más detalle, sin cambiar el
+      // tamaño visible del lienzo (updateStyle = false).
+      const prevPixelRatio = this.renderer.getPixelRatio();
+      const prevAspect = this.camera.aspect;
+      const containerAspect =
+        this.container.clientWidth / Math.max(this.container.clientHeight, 1);
+      let renderW: number;
+      let renderH: number;
+      if (containerAspect >= 1) {
+        renderW = resolutionLongSide;
+        renderH = Math.round(resolutionLongSide / containerAspect);
+      } else {
+        renderH = resolutionLongSide;
+        renderW = Math.round(resolutionLongSide * containerAspect);
+      }
+
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(renderW, renderH, false);
+      this.camera.aspect = renderW / renderH;
+      this.camera.updateProjectionMatrix();
+      this.renderer.render(this.scene, this.camera);
 
       const canvas = this.renderer.domElement;
       const stream = canvas.captureStream(fps);
@@ -464,9 +494,13 @@ export class TShirtScene {
       try {
         recorder = new MediaRecorder(stream, {
           mimeType,
-          videoBitsPerSecond: 12_000_000,
+          videoBitsPerSecond: 80_000_000,
         });
       } catch (error) {
+        this.renderer.setPixelRatio(prevPixelRatio);
+        this.camera.aspect = prevAspect;
+        this.camera.updateProjectionMatrix();
+        this.handleResize();
         reject(error as Error);
         return;
       }
@@ -488,6 +522,11 @@ export class TShirtScene {
         this.controls.enabled = true;
         this.sceneSettings.autoRotate = wasAutoRotate;
         if (this.parts) this.parts.group.rotation.y = startRotation;
+        // Restaurar resolución de pantalla
+        this.renderer.setPixelRatio(prevPixelRatio);
+        this.camera.aspect = prevAspect;
+        this.camera.updateProjectionMatrix();
+        this.handleResize();
       };
 
       recorder.onstop = () => {

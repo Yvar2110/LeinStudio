@@ -597,7 +597,7 @@ input[type="color"] {
 
 @keyframes spin {
   to {
-    transform: rotate(360deg);
+    transform: rotate(380deg);
   }
 }
 
