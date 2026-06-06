@@ -143,7 +143,25 @@ export class TShirtScene {
     const hits = this.raycaster.intersectObjects(getDesignMeshes(this.parts), false);
     if (hits.length === 0) return;
 
-    const id = hits[0].object.userData.designId as string;
+    // Solo se puede agarrar un diseño cuya cara mire hacia la cámara: así no se
+    // arrastra el diseño de la espalda mientras vemos el frente, ni viceversa.
+    const surfaceNormal = new THREE.Vector3();
+    const toCamera = new THREE.Vector3();
+    let hit: THREE.Intersection | null = null;
+    for (const candidate of hits) {
+      const mesh = candidate.object as THREE.Mesh;
+      mesh.updateMatrixWorld();
+      const e = mesh.matrixWorld.elements;
+      surfaceNormal.set(e[8], e[9], e[10]).normalize();
+      toCamera.copy(this.camera.position).sub(candidate.point);
+      if (surfaceNormal.dot(toCamera) > 0) {
+        hit = candidate;
+        break;
+      }
+    }
+    if (!hit) return;
+
+    const id = hit.object.userData.designId as string;
     const settings = this.getLayerSettings(id);
     if (!settings) return;
 
