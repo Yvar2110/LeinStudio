@@ -67,6 +67,10 @@ export class StudioApp {
           </div>
           <div class="header-actions">
             <button type="button" class="btn btn-ghost" id="reset-camera">Reset cámara</button>
+            <button type="button" class="btn btn-ghost" id="export-video">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+              <span id="export-video-label">Descargar video</span>
+            </button>
             <button type="button" class="btn btn-primary" id="export-png">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Exportar PNG
@@ -385,6 +389,44 @@ export class StudioApp {
       link.download = `lein-mockup-${Date.now()}.png`;
       link.href = dataUrl;
       link.click();
+    });
+
+    this.bindVideoExport();
+  }
+
+  private bindVideoExport(): void {
+    const button = this.root.querySelector("#export-video") as HTMLButtonElement;
+    const label = this.root.querySelector("#export-video-label") as HTMLElement;
+
+    if (!TShirtScene.isVideoExportSupported()) {
+      button.disabled = true;
+      button.title = "Tu navegador no permite grabar video del lienzo";
+      return;
+    }
+
+    button.addEventListener("click", async () => {
+      if (!this.scene || button.disabled) return;
+
+      const originalText = label.textContent;
+      button.disabled = true;
+      label.textContent = "Grabando…";
+
+      try {
+        const { blob, mimeType } = await this.scene.recordVideo();
+        const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.download = `lein-mockup-${Date.now()}.${ext}`;
+        link.href = url;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        console.error(error);
+        alert("No se pudo grabar el video en este navegador.");
+      } finally {
+        button.disabled = false;
+        label.textContent = originalText;
+      }
     });
   }
 

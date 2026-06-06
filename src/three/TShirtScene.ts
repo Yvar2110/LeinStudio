@@ -44,6 +44,9 @@ export class TShirtScene {
   private draggingId: string | null = null;
   private isDragging = false;
 
+  private isRecording = false;
+  private recordAngle = 0;
+
   private constructor(container: HTMLElement, sceneSettings: SceneSettings) {
     this.container = container;
     this.sceneSettings = { ...sceneSettings };
@@ -275,7 +278,9 @@ export class TShirtScene {
     const elapsed = this.clock.getElapsedTime();
 
     if (this.parts) {
-      if (this.sceneSettings.autoRotate && !this.isDragging) {
+      if (this.isRecording) {
+        this.parts.group.rotation.y = this.recordAngle;
+      } else if (this.sceneSettings.autoRotate && !this.isDragging) {
         this.parts.group.rotation.y = elapsed * 0.35;
       }
 
@@ -421,6 +426,94 @@ export class TShirtScene {
   exportImage(): string {
     this.renderer.render(this.scene, this.camera);
     return this.renderer.domElement.toDataURL("image/png");
+  }
+
+  static isVideoExportSupported(): boolean {
+    return (
+      typeof MediaRecorder !== "undefined" &&
+      typeof HTMLCanvasElement.prototype.captureStream === "function"
+    );
+  }
+
+  private pickVideoMimeType(): string {
+    const candidates = [
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+      "video/mp4",
+    ];
+    for (const type of candidates) {
+      if (MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return "video/webm";
+  }
+
+  /** Graba un giro completo (360°) de la camiseta configurada y devuelve el video. */
+  recordVideo(durationMs = 6000, fps = 30): Promise<{ blob: Blob; mimeType: string }> {
+    return new Promise((resolve, reject) => {
+      if (!TShirtScene.isVideoExportSupported()) {
+        reject(new Error("La grabación de video no está soportada en este navegador"));
+        return;
+      }
+
+      const canvas = this.renderer.domElement;
+      const stream = canvas.captureStream(fps);
+      const mimeType = this.pickVideoMimeType();
+
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, {
+          mimeType,
+          videoBitsPerSecond: 12_000_000,
+        });
+      } catch (error) {
+        reject(error as Error);
+        return;
+      }
+
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      const startRotation = this.parts ? this.parts.group.rotation.y : 0;
+      const wasAutoRotate = this.sceneSettings.autoRotate;
+      this.sceneSettings.autoRotate = false;
+      this.controls.enabled = false;
+      this.isRecording = true;
+      this.recordAngle = startRotation;
+
+      const cleanup = () => {
+        this.isRecording = false;
+        this.controls.enabled = true;
+        this.sceneSettings.autoRotate = wasAutoRotate;
+        if (this.parts) this.parts.group.rotation.y = startRotation;
+      };
+
+      recorder.onstop = () => {
+        cleanup();
+        resolve({ blob: new Blob(chunks, { type: mimeType }), mimeType });
+      };
+      recorder.onerror = () => {
+        cleanup();
+        reject(new Error("Error durante la grabación del video"));
+      };
+
+      recorder.start();
+
+      const start = performance.now();
+      const tick = () => {
+        const progress = (performance.now() - start) / durationMs;
+        if (progress >= 1) {
+          this.recordAngle = startRotation + Math.PI * 2;
+          if (recorder.state !== "inactive") recorder.stop();
+          return;
+        }
+        this.recordAngle = startRotation + progress * Math.PI * 2;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
   }
 
   dispose(): void {
