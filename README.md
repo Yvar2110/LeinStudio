@@ -33,6 +33,26 @@ npm run build
 npm run preview
 ```
 
+## Despliegue en Cloudflare
+
+### Cloudflare Pages (recomendado)
+
+1. Conecta el repositorio en **Workers & Pages → Create → Pages**
+2. Configura el build:
+   - **Build command:** `npm run build`
+   - **Build output directory:** `dist`
+   - **Node.js version:** 18 o superior
+
+### Wrangler CLI
+
+```bash
+npm run deploy
+```
+
+Requiere tener instalado Wrangler (`npm i -g wrangler`) e iniciar sesión (`wrangler login`).
+
+El archivo `wrangler.jsonc` sirve los archivos estáticos generados en `dist/`.
+
 ## Modelo 3D
 
 El estudio carga un modelo **GLB de camiseta regular** (`public/models/regular-tshirt.glb`) con mallas y UVs profesionales, similar al enfoque de [VirtualThreads](https://www.virtualthreads.io/studio/regular-t-shirt), que usa geometría real exportada desde Blender/Verge3D.
