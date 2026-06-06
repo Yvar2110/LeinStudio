@@ -1,5 +1,12 @@
 import { TShirtScene } from "../three/TShirtScene";
-import { DEFAULT_STATE, type StudioState } from "../types";
+import {
+  createDefaultDesignSettings,
+  DEFAULT_STATE,
+  MAX_DESIGNS,
+  type DesignLayer,
+  type DesignSettings,
+  type StudioState,
+} from "../types";
 
 const PRESET_COLORS = [
   "#f5f5f0",
@@ -27,7 +34,10 @@ export class StudioApp {
   private state: StudioState = structuredClone(DEFAULT_STATE);
   private scene: TShirtScene | null = null;
   private previewContainer!: HTMLElement;
-  private fileNameEl!: HTMLElement;
+  private designListEl!: HTMLElement;
+  private uploadZoneEl!: HTMLElement;
+  private designCountEl!: HTMLElement;
+  private positionSectionEl!: HTMLElement;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -36,7 +46,15 @@ export class StudioApp {
     this.initScene();
   }
 
+  private getActiveDesign(): DesignLayer | null {
+    if (!this.state.activeDesignId) return null;
+    return this.state.designs.find((d) => d.id === this.state.activeDesignId) ?? null;
+  }
+
   private render(): void {
+    const active = this.getActiveDesign();
+    const activeSettings = active?.settings ?? createDefaultDesignSettings();
+
     this.root.innerHTML = `
       <div class="studio">
         <header class="studio-header">
@@ -59,38 +77,44 @@ export class StudioApp {
         <main class="studio-main">
           <aside class="panel panel-left">
             <section class="panel-section">
-              <h2>Diseño</h2>
+              <div class="section-header-row">
+                <h2>Diseños</h2>
+                <span class="design-count" id="design-count">0/${MAX_DESIGNS}</span>
+              </div>
               <div class="upload-zone" id="upload-zone">
-                <input type="file" id="design-input" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden />
+                <input type="file" id="design-input" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple hidden />
                 <div class="upload-icon">
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 </div>
-                <p class="upload-title">Arrastra tu diseño aquí</p>
-                <p class="upload-sub">PNG, JPG, WEBP o SVG</p>
-                <button type="button" class="btn btn-secondary btn-sm" id="browse-btn">Seleccionar archivo</button>
+                <p class="upload-title">Arrastra tus diseños aquí</p>
+                <p class="upload-sub">PNG, JPG, WEBP o SVG · hasta ${MAX_DESIGNS} imágenes</p>
+                <button type="button" class="btn btn-secondary btn-sm" id="browse-btn">Seleccionar archivos</button>
               </div>
-              <p class="file-name" id="file-name">Sin diseño cargado</p>
-              <button type="button" class="btn btn-ghost btn-sm btn-block" id="clear-design" disabled>Quitar diseño</button>
+              <div class="design-list" id="design-list"></div>
+              <button type="button" class="btn btn-ghost btn-sm btn-block" id="clear-designs" disabled>Quitar todos</button>
             </section>
 
-            <section class="panel-section">
+            <section class="panel-section" id="position-section">
               <h2>Posición del diseño</h2>
               <p class="field-label">Ubicación</p>
               <div class="side-toggle" id="design-side-toggle">
-                <button type="button" class="side-btn active" data-side="front">Frente</button>
-                <button type="button" class="side-btn" data-side="back">Espalda</button>
+                <button type="button" class="side-btn ${activeSettings.side === "front" ? "active" : ""}" data-side="front">Frente</button>
+                <button type="button" class="side-btn ${activeSettings.side === "back" ? "active" : ""}" data-side="back">Espalda</button>
               </div>
-              ${this.sliderControl("offset-x", "Horizontal", -0.3, 0.3, 0.01, this.state.design.offsetX)}
-              ${this.sliderControl("offset-y", "Vertical", -0.2, 0.3, 0.01, this.state.design.offsetY)}
-              ${this.sliderControl("design-scale", "Escala", 0.2, 1.2, 0.01, this.state.design.scale)}
-              ${this.sliderControl("design-rotation", "Rotación", -180, 180, 1, this.state.design.rotation, "°")}
+              ${this.sliderControl("offset-x", "Horizontal", -0.35, 0.35, 0.01, activeSettings.offsetX)}
+              ${this.sliderControl("offset-y", "Vertical", -0.3, 0.35, 0.01, activeSettings.offsetY)}
+              ${this.sliderControl("design-scale", "Escala", 0.2, 1.2, 0.01, activeSettings.scale)}
+              ${this.sliderControl("design-rotation", "Rotación", -180, 180, 1, activeSettings.rotation, "°")}
+              <p class="field-hint">También puedes arrastrar el diseño directamente en la vista 3D</p>
             </section>
           </aside>
 
           <div class="viewport">
             <div class="viewport-frame" id="preview-container"></div>
             <div class="viewport-hint">
-              <span>Arrastra para rotar</span>
+              <span>Arrastra diseño para mover</span>
+              <span>·</span>
+              <span>Fondo para rotar</span>
               <span>·</span>
               <span>Rueda para zoom</span>
             </div>
@@ -149,7 +173,12 @@ export class StudioApp {
     `;
 
     this.previewContainer = this.root.querySelector("#preview-container")!;
-    this.fileNameEl = this.root.querySelector("#file-name")!;
+    this.designListEl = this.root.querySelector("#design-list")!;
+    this.uploadZoneEl = this.root.querySelector("#upload-zone")!;
+    this.designCountEl = this.root.querySelector("#design-count")!;
+    this.positionSectionEl = this.root.querySelector("#position-section")!;
+    this.refreshDesignListUI();
+    this.updatePositionSectionState();
   }
 
   private sliderControl(
@@ -189,6 +218,11 @@ export class StudioApp {
           this.state.garment,
           this.state.scene
         );
+        this.scene.setCallbacks({
+          onDesignChange: (id, settings) => this.handleDesignDrag(id, settings),
+          onDesignSelect: (id) => this.selectDesign(id, false),
+        });
+        this.scene.setDesignLayers(this.state.designs);
         this.previewContainer.querySelector(".viewport-loading")?.remove();
       } catch (error) {
         console.error(error);
@@ -212,68 +246,58 @@ export class StudioApp {
   }
 
   private bindEvents(): void {
-    const uploadZone = this.root.querySelector("#upload-zone")!;
     const designInput = this.root.querySelector("#design-input") as HTMLInputElement;
     const browseBtn = this.root.querySelector("#browse-btn")!;
-    const clearBtn = this.root.querySelector("#clear-design") as HTMLButtonElement;
+    const clearBtn = this.root.querySelector("#clear-designs") as HTMLButtonElement;
 
     browseBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (this.state.designs.length >= MAX_DESIGNS) return;
       designInput.click();
     });
-    uploadZone.addEventListener("click", () => designInput.click());
 
-    uploadZone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      uploadZone.classList.add("dragover");
+    this.uploadZoneEl.addEventListener("click", () => {
+      if (this.state.designs.length >= MAX_DESIGNS) return;
+      designInput.click();
     });
-    uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("dragover"));
-    uploadZone.addEventListener("drop", (e) => {
+
+    this.uploadZoneEl.addEventListener("dragover", (e) => {
       e.preventDefault();
-      uploadZone.classList.remove("dragover");
-      const file = (e as DragEvent).dataTransfer?.files[0];
-      if (file) this.handleDesignUpload(file);
+      if (this.state.designs.length < MAX_DESIGNS) {
+        this.uploadZoneEl.classList.add("dragover");
+      }
+    });
+    this.uploadZoneEl.addEventListener("dragleave", () =>
+      this.uploadZoneEl.classList.remove("dragover")
+    );
+    this.uploadZoneEl.addEventListener("drop", (e) => {
+      e.preventDefault();
+      this.uploadZoneEl.classList.remove("dragover");
+      const files = [...((e as DragEvent).dataTransfer?.files ?? [])];
+      if (files.length) void this.handleDesignUpload(files);
     });
 
     designInput.addEventListener("change", () => {
-      const file = designInput.files?.[0];
-      if (file) this.handleDesignUpload(file);
-    });
-
-    clearBtn.addEventListener("click", () => {
-      this.scene?.clearDesign();
-      this.fileNameEl.textContent = "Sin diseño cargado";
-      clearBtn.disabled = true;
+      const files = [...(designInput.files ?? [])];
+      if (files.length) void this.handleDesignUpload(files);
       designInput.value = "";
     });
 
-    this.bindSlider("offset-x", (v) => {
-      this.state.design.offsetX = v;
-      this.scene?.setDesign(this.state.design);
-    });
-    this.bindSlider("offset-y", (v) => {
-      this.state.design.offsetY = v;
-      this.scene?.setDesign(this.state.design);
-    });
-    this.bindSlider("design-scale", (v) => {
-      this.state.design.scale = v;
-      this.scene?.setDesign(this.state.design);
-    });
-    this.bindSlider("design-rotation", (v) => {
-      this.state.design.rotation = v;
-      this.scene?.setDesign(this.state.design);
-    }, "°");
+    clearBtn.addEventListener("click", () => this.clearAllDesigns());
+
+    this.bindSlider("offset-x", (v) => this.updateActiveDesignSetting({ offsetX: v }));
+    this.bindSlider("offset-y", (v) => this.updateActiveDesignSetting({ offsetY: v }));
+    this.bindSlider("design-scale", (v) => this.updateActiveDesignSetting({ scale: v }));
+    this.bindSlider("design-rotation", (v) => this.updateActiveDesignSetting({ rotation: v }), "°");
 
     this.root.querySelectorAll(".side-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const side = (btn as HTMLElement).dataset.side as "front" | "back";
         if (!side) return;
-
-        this.state.design.side = side;
+        this.updateActiveDesignSetting({ side });
         this.root.querySelectorAll(".side-btn").forEach((b) => {
           b.classList.toggle("active", (b as HTMLElement).dataset.side === side);
         });
-        this.scene?.setDesign(this.state.design);
       });
     });
 
@@ -379,29 +403,191 @@ export class StudioApp {
     });
   }
 
-  private async handleDesignUpload(file: File): Promise<void> {
-    const isImage =
-      file.type.startsWith("image/") ||
-      /\.(png|jpe?g|webp|svg)$/i.test(file.name);
+  private updateActiveDesignSetting(partial: Partial<DesignSettings>): void {
+    const active = this.getActiveDesign();
+    if (!active) return;
 
-    if (!isImage) {
-      this.fileNameEl.textContent = "Formato no soportado";
+    Object.assign(active.settings, partial);
+    this.scene?.updateDesign(active.id, active.settings);
+  }
+
+  private handleDesignDrag(id: string, settings: DesignSettings): void {
+    const layer = this.state.designs.find((d) => d.id === id);
+    if (!layer) return;
+
+    layer.settings = { ...settings };
+    if (this.state.activeDesignId === id) {
+      this.syncSlidersFromActiveDesign();
+    }
+  }
+
+  private selectDesign(id: string, syncScene = true): void {
+    if (!this.state.designs.some((d) => d.id === id)) return;
+    this.state.activeDesignId = id;
+    this.refreshDesignListUI();
+    this.syncSlidersFromActiveDesign();
+    this.updatePositionSectionState();
+    if (syncScene) {
+      // selección solo visual; la escena ya conoce el diseño activo vía UI
+    }
+  }
+
+  private syncSlidersFromActiveDesign(): void {
+    const active = this.getActiveDesign();
+    if (!active) return;
+
+    const { offsetX, offsetY, scale, rotation, side } = active.settings;
+
+    const setSlider = (id: string, value: number, suffix = "") => {
+      const input = this.root.querySelector(`#${id}`) as HTMLInputElement | null;
+      const output = this.root.querySelector(`#${id}-out`);
+      if (!input || !output) return;
+      input.value = String(value);
+      const step = parseFloat(input.step);
+      output.textContent = `${value.toFixed(step < 1 ? 2 : 0)}${suffix}`;
+    };
+
+    setSlider("offset-x", offsetX);
+    setSlider("offset-y", offsetY);
+    setSlider("design-scale", scale);
+    setSlider("design-rotation", rotation, "°");
+
+    this.root.querySelectorAll(".side-btn").forEach((btn) => {
+      btn.classList.toggle("active", (btn as HTMLElement).dataset.side === side);
+    });
+  }
+
+  private refreshDesignListUI(): void {
+    const clearBtn = this.root.querySelector("#clear-designs") as HTMLButtonElement;
+    const atMax = this.state.designs.length >= MAX_DESIGNS;
+
+    this.designCountEl.textContent = `${this.state.designs.length}/${MAX_DESIGNS}`;
+    clearBtn.disabled = this.state.designs.length === 0;
+    this.uploadZoneEl.classList.toggle("upload-zone-full", atMax);
+
+    if (this.state.designs.length === 0) {
+      this.designListEl.innerHTML = `<p class="design-list-empty">Sin diseños cargados</p>`;
       return;
     }
 
-    if (!this.scene) {
-      this.fileNameEl.textContent = "Espera a que cargue el visor 3D…";
+    this.designListEl.innerHTML = this.state.designs
+      .map(
+        (d) => `
+        <div class="design-item ${d.id === this.state.activeDesignId ? "active" : ""}" data-id="${d.id}">
+          <button type="button" class="design-item-select" data-id="${d.id}">
+            <span class="design-item-name">${this.escapeHtml(d.name)}</span>
+            <span class="design-item-side">${d.settings.side === "front" ? "Frente" : "Espalda"}</span>
+          </button>
+          <button type="button" class="design-item-remove" data-id="${d.id}" title="Quitar">×</button>
+        </div>
+      `
+      )
+      .join("");
+
+    this.designListEl.querySelectorAll(".design-item-select").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = (btn as HTMLElement).dataset.id!;
+        this.selectDesign(id);
+      });
+    });
+
+    this.designListEl.querySelectorAll(".design-item-remove").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = (btn as HTMLElement).dataset.id!;
+        this.removeDesign(id);
+      });
+    });
+  }
+
+  private updatePositionSectionState(): void {
+    const hasActive = !!this.getActiveDesign();
+    this.positionSectionEl.classList.toggle("is-disabled", !hasActive);
+    this.positionSectionEl.querySelectorAll("input, button").forEach((el) => {
+      (el as HTMLInputElement).disabled = !hasActive;
+    });
+  }
+
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  private async handleDesignUpload(files: File[]): Promise<void> {
+    if (!this.scene) return;
+
+    const imageFiles = files.filter(
+      (file) =>
+        file.type.startsWith("image/") || /\.(png|jpe?g|webp|svg)$/i.test(file.name)
+    );
+
+    if (imageFiles.length === 0) {
       return;
     }
 
-    try {
-      await this.scene.loadDesignImage(file);
-      this.fileNameEl.textContent = file.name;
-      (this.root.querySelector("#clear-design") as HTMLButtonElement).disabled = false;
-      this.scene.setDesign(this.state.design);
-    } catch (error) {
-      console.error(error);
-      this.fileNameEl.textContent = "Error al cargar imagen";
+    const slotsLeft = MAX_DESIGNS - this.state.designs.length;
+    if (slotsLeft <= 0) return;
+
+    for (const file of imageFiles.slice(0, slotsLeft)) {
+      const id = crypto.randomUUID();
+      const settings = createDefaultDesignSettings();
+
+      // Escalonar cada diseño nuevo para que no quede exactamente encima del anterior
+      const step = this.state.designs.length;
+      if (step > 0) {
+        const clamp = (v: number, min: number, max: number) =>
+          Math.min(max, Math.max(min, v));
+        settings.offsetX = clamp(((step % 3) - 1) * 0.1, -0.2, 0.2);
+        settings.offsetY = clamp(-Math.floor(step / 3) * 0.1, -0.25, 0.25);
+      }
+
+      const layer: DesignLayer = {
+        id,
+        name: file.name,
+        settings,
+      };
+
+      this.state.designs.push(layer);
+      this.state.activeDesignId = id;
+      this.scene.setDesignLayers(this.state.designs);
+
+      try {
+        await this.scene.loadDesignImage(id, file);
+      } catch (error) {
+        console.error(error);
+        this.state.designs = this.state.designs.filter((d) => d.id !== id);
+        this.state.activeDesignId = this.state.designs.at(-1)?.id ?? null;
+        this.scene.setDesignLayers(this.state.designs);
+      }
     }
+
+    this.refreshDesignListUI();
+    this.syncSlidersFromActiveDesign();
+    this.updatePositionSectionState();
+  }
+
+  private removeDesign(id: string): void {
+    this.scene?.removeDesign(id);
+    this.state.designs = this.state.designs.filter((d) => d.id !== id);
+
+    if (this.state.activeDesignId === id) {
+      this.state.activeDesignId = this.state.designs.at(-1)?.id ?? null;
+    }
+
+    this.scene?.setDesignLayers(this.state.designs);
+    this.refreshDesignListUI();
+    this.syncSlidersFromActiveDesign();
+    this.updatePositionSectionState();
+  }
+
+  private clearAllDesigns(): void {
+    this.scene?.clearAllDesigns();
+    this.state.designs = [];
+    this.state.activeDesignId = null;
+    this.refreshDesignListUI();
+    this.updatePositionSectionState();
   }
 }

@@ -1,14 +1,20 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
-  applyDesignTexture,
+  clearAllDesigns as clearAllDesignMeshes,
   createTShirtModel,
+  getDesignMeshes,
+  getDragPlaneNormal,
+  getDragPlanePoint,
+  removeDesign as removeDesignMesh,
+  updateDesignSettings,
   updateGarmentColor,
+  upsertDesign,
+  worldPointToOffsets,
   type TShirtParts,
 } from "./TShirtModel";
-import type { DesignSettings, GarmentSettings, SceneSettings } from "../types";
+import type { DesignLayer, DesignSettings, GarmentSettings, SceneSettings } from "../types";
 
-/** Ajustes de cámara inspirados en VirtualThreads (Verge3D) */
 const VT_CAMERA_FOV = THREE.MathUtils.radToDeg(0.503);
 
 export class TShirtScene {
@@ -18,7 +24,7 @@ export class TShirtScene {
   private controls: OrbitControls;
   private parts!: TShirtParts;
   private baseGroupY = 0;
-  private designTexture: THREE.Texture | null = null;
+  private designTextures = new Map<string, THREE.Texture>();
   private backgroundTexture: THREE.Texture | null = null;
   private clock = new THREE.Clock();
   private animationId = 0;
@@ -27,18 +33,20 @@ export class TShirtScene {
   private platform!: THREE.Mesh;
 
   private sceneSettings: SceneSettings;
-  private designSettings: DesignSettings;
+  private layers: DesignLayer[] = [];
+  private onDesignChange?: (id: string, settings: DesignSettings) => void;
+  private onDesignSelect?: (id: string) => void;
+
+  private raycaster = new THREE.Raycaster();
+  private pointer = new THREE.Vector2();
+  private dragPlane = new THREE.Plane();
+  private dragWorldPoint = new THREE.Vector3();
+  private draggingId: string | null = null;
+  private isDragging = false;
 
   private constructor(container: HTMLElement, sceneSettings: SceneSettings) {
     this.container = container;
     this.sceneSettings = { ...sceneSettings };
-    this.designSettings = {
-      side: "front",
-      offsetX: 0,
-      offsetY: 0,
-      scale: 0.99,
-      rotation: 0,
-    };
 
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -75,6 +83,7 @@ export class TShirtScene {
 
     this.setupLighting();
     this.setupEnvironment();
+    this.setupDesignDrag();
 
     this.platform = this.createPlatform();
     this.scene.add(this.platform);
@@ -100,9 +109,102 @@ export class TShirtScene {
     return instance;
   }
 
+  setCallbacks(callbacks: {
+    onDesignChange?: (id: string, settings: DesignSettings) => void;
+    onDesignSelect?: (id: string) => void;
+  }): void {
+    this.onDesignChange = callbacks.onDesignChange;
+    this.onDesignSelect = callbacks.onDesignSelect;
+  }
+
+  private setupDesignDrag(): void {
+    const canvas = this.renderer.domElement;
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointerleave", this.onPointerUp);
+  }
+
+  private updatePointer(event: PointerEvent): void {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  }
+
+  private getLayerSettings(id: string): DesignSettings | null {
+    return this.layers.find((l) => l.id === id)?.settings ?? null;
+  }
+
+  private onPointerDown = (event: PointerEvent): void => {
+    if (!this.parts || event.button !== 0) return;
+
+    this.updatePointer(event);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const hits = this.raycaster.intersectObjects(getDesignMeshes(this.parts), false);
+    if (hits.length === 0) return;
+
+    const id = hits[0].object.userData.designId as string;
+    const settings = this.getLayerSettings(id);
+    if (!settings) return;
+
+    event.preventDefault();
+    this.renderer.domElement.setPointerCapture(event.pointerId);
+    this.draggingId = id;
+    this.isDragging = true;
+    this.controls.enabled = false;
+    this.renderer.domElement.style.cursor = "grabbing";
+    this.onDesignSelect?.(id);
+
+    const planeNormal = getDragPlaneNormal(this.parts, settings);
+    const planePoint = getDragPlanePoint(this.parts, settings);
+    this.dragPlane.setFromNormalAndCoplanarPoint(planeNormal, planePoint);
+  };
+
+  private onPointerMove = (event: PointerEvent): void => {
+    if (!this.isDragging || !this.draggingId || !this.parts) return;
+
+    const settings = this.getLayerSettings(this.draggingId);
+    if (!settings) return;
+
+    this.updatePointer(event);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+
+    if (!this.raycaster.ray.intersectPlane(this.dragPlane, this.dragWorldPoint)) return;
+
+    const { offsetX, offsetY } = worldPointToOffsets(
+      this.parts,
+      settings,
+      this.dragWorldPoint
+    );
+
+    const next: DesignSettings = {
+      ...settings,
+      offsetX: THREE.MathUtils.clamp(offsetX, -0.35, 0.35),
+      offsetY: THREE.MathUtils.clamp(offsetY, -0.3, 0.35),
+    };
+
+    const layer = this.layers.find((l) => l.id === this.draggingId);
+    if (layer) layer.settings = next;
+
+    updateDesignSettings(this.parts, this.draggingId, next);
+    this.onDesignChange?.(this.draggingId, next);
+  };
+
+  private onPointerUp = (event: PointerEvent): void => {
+    if (!this.isDragging) return;
+
+    if (this.renderer.domElement.hasPointerCapture(event.pointerId)) {
+      this.renderer.domElement.releasePointerCapture(event.pointerId);
+    }
+
+    this.isDragging = false;
+    this.draggingId = null;
+    this.controls.enabled = true;
+    this.renderer.domElement.style.cursor = "";
+  };
+
   private setupLighting(): void {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
-    this.scene.add(ambient);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
     const keyLight = new THREE.DirectionalLight(0xfff8f0, 1.55);
     keyLight.position.set(1.8, 3.5, 2.8);
@@ -117,14 +219,8 @@ export class TShirtScene {
     keyLight.shadow.bias = -0.0003;
     this.scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xd0dcff, 0.65);
-    fillLight.position.set(-2.8, 1.5, -0.5);
-    this.scene.add(fillLight);
-
-    const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
-    rimLight.position.set(0, 0.5, -3);
-    this.scene.add(rimLight);
-
+    this.scene.add(new THREE.DirectionalLight(0xd0dcff, 0.65).translateX(-2.8).translateY(1.5));
+    this.scene.add(new THREE.DirectionalLight(0xffffff, 0.4).translateZ(-3).translateY(0.5));
     this.scene.add(new THREE.HemisphereLight(0xe8eeff, 0x2a2a32, 0.4));
   }
 
@@ -140,11 +236,7 @@ export class TShirtScene {
   private createPlatform(): THREE.Mesh {
     const mesh = new THREE.Mesh(
       new THREE.CircleGeometry(0.85, 64),
-      new THREE.MeshStandardMaterial({
-        color: 0x22222c,
-        roughness: 0.88,
-        metalness: 0.12,
-      })
+      new THREE.MeshStandardMaterial({ color: 0x22222c, roughness: 0.88, metalness: 0.12 })
     );
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = -0.54;
@@ -165,20 +257,15 @@ export class TShirtScene {
     const elapsed = this.clock.getElapsedTime();
 
     if (this.parts) {
-      if (this.sceneSettings.autoRotate) {
+      if (this.sceneSettings.autoRotate && !this.isDragging) {
         this.parts.group.rotation.y = elapsed * 0.35;
       }
 
       if (this.sceneSettings.windEffect) {
         this.parts.group.rotation.z = Math.sin(elapsed * 1.8) * 0.035;
-        this.parts.group.position.y =
-          this.baseGroupY + Math.sin(elapsed * 2.2) * 0.012;
+        this.parts.group.position.y = this.baseGroupY + Math.sin(elapsed * 2.2) * 0.012;
       } else {
-        this.parts.group.rotation.z = THREE.MathUtils.lerp(
-          this.parts.group.rotation.z,
-          0,
-          0.08
-        );
+        this.parts.group.rotation.z = THREE.MathUtils.lerp(this.parts.group.rotation.z, 0, 0.08);
         this.parts.group.position.y = THREE.MathUtils.lerp(
           this.parts.group.position.y,
           this.baseGroupY,
@@ -191,28 +278,56 @@ export class TShirtScene {
     this.renderer.render(this.scene, this.camera);
   };
 
+  private syncDesignMeshes(): void {
+    if (!this.parts) return;
+    clearAllDesignMeshes(this.parts);
+    for (const layer of this.layers) {
+      const texture = this.designTextures.get(layer.id);
+      if (texture) upsertDesign(this.parts, layer.id, texture, layer.settings);
+    }
+  }
+
   setGarment(garment: GarmentSettings): void {
     if (this.parts) updateGarmentColor(this.parts, garment);
   }
 
-  setDesign(settings: DesignSettings): void {
-    this.designSettings = { ...settings };
-    if (this.parts) {
-      applyDesignTexture(this.parts, this.designTexture, this.designSettings);
-    }
+  setDesignLayers(layers: DesignLayer[]): void {
+    this.layers = layers.map((l) => ({
+      ...l,
+      settings: { ...l.settings },
+    }));
+    this.syncDesignMeshes();
   }
 
-  loadDesignImage(file: File): Promise<void> {
+  updateDesign(id: string, settings: DesignSettings): void {
+    const layer = this.layers.find((l) => l.id === id);
+    if (!layer) return;
+    layer.settings = { ...settings };
+    if (this.parts) updateDesignSettings(this.parts, id, layer.settings);
+  }
+
+  loadDesignImage(id: string, file: File): Promise<void> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
         const img = new Image();
         img.onload = () => {
-          if (this.designTexture) this.designTexture.dispose();
-          this.designTexture = new THREE.Texture(img);
-          this.designTexture.needsUpdate = true;
-          if (this.parts) {
-            applyDesignTexture(this.parts, this.designTexture, this.designSettings);
+          const existing = this.designTextures.get(id);
+          if (existing) existing.dispose();
+
+          // Las imágenes muy grandes superan el tamaño máximo de textura de la GPU
+          // y se ven como un parche negro: las reducimos a un máximo seguro.
+          const source = this.normalizeImageSize(img);
+
+          const texture = new THREE.Texture(source);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+          texture.needsUpdate = true;
+          this.designTextures.set(id, texture);
+
+          const layer = this.layers.find((l) => l.id === id);
+          if (layer && this.parts) {
+            upsertDesign(this.parts, id, texture, layer.settings);
           }
           resolve();
         };
@@ -224,12 +339,36 @@ export class TShirtScene {
     });
   }
 
-  clearDesign(): void {
-    if (this.designTexture) {
-      this.designTexture.dispose();
-      this.designTexture = null;
+  private normalizeImageSize(img: HTMLImageElement): HTMLImageElement | HTMLCanvasElement {
+    const maxSize = Math.min(2048, this.renderer.capabilities.maxTextureSize || 2048);
+    const largest = Math.max(img.width, img.height);
+    if (largest <= maxSize) return img;
+
+    const ratio = maxSize / largest;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * ratio));
+    canvas.height = Math.max(1, Math.round(img.height * ratio));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return img;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  removeDesign(id: string): void {
+    const texture = this.designTextures.get(id);
+    if (texture) {
+      texture.dispose();
+      this.designTextures.delete(id);
     }
-    if (this.parts) applyDesignTexture(this.parts, null, this.designSettings);
+    this.layers = this.layers.filter((l) => l.id !== id);
+    if (this.parts) removeDesignMesh(this.parts, id);
+  }
+
+  clearAllDesigns(): void {
+    this.designTextures.forEach((t) => t.dispose());
+    this.designTextures.clear();
+    this.layers = [];
+    if (this.parts) clearAllDesignMeshes(this.parts);
   }
 
   setSceneSettings(settings: SceneSettings): void {
@@ -269,9 +408,13 @@ export class TShirtScene {
   dispose(): void {
     cancelAnimationFrame(this.animationId);
     window.removeEventListener("resize", this.handleResize);
+    this.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
+    this.renderer.domElement.removeEventListener("pointermove", this.onPointerMove);
+    this.renderer.domElement.removeEventListener("pointerup", this.onPointerUp);
+    this.renderer.domElement.removeEventListener("pointerleave", this.onPointerUp);
     this.controls.dispose();
     this.renderer.dispose();
-    if (this.designTexture) this.designTexture.dispose();
+    this.designTextures.forEach((t) => t.dispose());
     if (this.backgroundTexture) this.backgroundTexture.dispose();
   }
 }

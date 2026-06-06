@@ -1,11 +1,19 @@
 export type DesignSide = "front" | "back";
 
+export const MAX_DESIGNS = 5;
+
 export interface DesignSettings {
   side: DesignSide;
   offsetX: number;
   offsetY: number;
   scale: number;
   rotation: number;
+}
+
+export interface DesignLayer {
+  id: string;
+  name: string;
+  settings: DesignSettings;
 }
 
 export interface GarmentSettings {
@@ -23,19 +31,25 @@ export interface SceneSettings {
 }
 
 export interface StudioState {
-  design: DesignSettings;
+  designs: DesignLayer[];
+  activeDesignId: string | null;
   garment: GarmentSettings;
   scene: SceneSettings;
 }
 
-export const DEFAULT_STATE: StudioState = {
-  design: {
+export function createDefaultDesignSettings(): DesignSettings {
+  return {
     side: "front",
     offsetX: 0,
     offsetY: 0,
-    scale: 0.99,
+    scale: 0.55,
     rotation: 0,
-  },
+  };
+}
+
+export const DEFAULT_STATE: StudioState = {
+  designs: [],
+  activeDesignId: null,
   garment: {
     color: "#f5f5f0",
     roughness: 0.82,
