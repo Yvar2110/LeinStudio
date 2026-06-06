@@ -75,6 +75,11 @@ export class StudioApp {
 
             <section class="panel-section">
               <h2>Posición del diseño</h2>
+              <p class="field-label">Ubicación</p>
+              <div class="side-toggle" id="design-side-toggle">
+                <button type="button" class="side-btn active" data-side="front">Frente</button>
+                <button type="button" class="side-btn" data-side="back">Espalda</button>
+              </div>
               ${this.sliderControl("offset-x", "Horizontal", -0.3, 0.3, 0.01, this.state.design.offsetX)}
               ${this.sliderControl("offset-y", "Vertical", -0.2, 0.3, 0.01, this.state.design.offsetY)}
               ${this.sliderControl("design-scale", "Escala", 0.2, 1.2, 0.01, this.state.design.scale)}
@@ -258,6 +263,19 @@ export class StudioApp {
       this.state.design.rotation = v;
       this.scene?.setDesign(this.state.design);
     }, "°");
+
+    this.root.querySelectorAll(".side-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const side = (btn as HTMLElement).dataset.side as "front" | "back";
+        if (!side) return;
+
+        this.state.design.side = side;
+        this.root.querySelectorAll(".side-btn").forEach((b) => {
+          b.classList.toggle("active", (b as HTMLElement).dataset.side === side);
+        });
+        this.scene?.setDesign(this.state.design);
+      });
+    });
 
     const garmentColor = this.root.querySelector("#garment-color") as HTMLInputElement;
     const garmentHex = this.root.querySelector("#garment-hex") as HTMLInputElement;

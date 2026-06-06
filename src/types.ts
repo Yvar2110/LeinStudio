@@ -1,4 +1,7 @@
+export type DesignSide = "front" | "back";
+
 export interface DesignSettings {
+  side: DesignSide;
   offsetX: number;
   offsetY: number;
   scale: number;
@@ -27,9 +30,10 @@ export interface StudioState {
 
 export const DEFAULT_STATE: StudioState = {
   design: {
+    side: "front",
     offsetX: 0,
     offsetY: 0,
-    scale: 0.55,
+    scale: 0.99,
     rotation: 0,
   },
   garment: {

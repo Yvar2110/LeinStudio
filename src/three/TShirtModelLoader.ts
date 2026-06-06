@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { GarmentSettings } from "../types";
+import type { DesignSide, GarmentSettings } from "../types";
 
 const MODEL_URL = "/models/regular-tshirt.glb";
 const FABRIC_NORMAL =
@@ -8,13 +8,18 @@ const FABRIC_NORMAL =
 const FABRIC_ROUGHNESS =
   "https://virtualthreads-app.nyc3.cdn.digitaloceanspaces.com/wiggle_bones_test2/t-shirt_roughness.jpg";
 
+export interface DesignAnchor {
+  position: THREE.Vector3;
+  normal: THREE.Vector3;
+}
+
 export interface LoadedShirt {
   group: THREE.Group;
   bodyMesh: THREE.Mesh;
   bodyMaterial: THREE.MeshPhysicalMaterial;
-  chestAnchor: {
-    position: THREE.Vector3;
-    normal: THREE.Vector3;
+  anchors: {
+    front: DesignAnchor;
+    back: DesignAnchor;
   };
 }
 
@@ -38,12 +43,62 @@ function pickBodyMesh(root: THREE.Object3D): THREE.Mesh {
   return best;
 }
 
-function computeChestAnchor(mesh: THREE.Mesh): LoadedShirt["chestAnchor"] {
-  mesh.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(mesh);
+/** Punto de colocación del diseño en coordenadas locales del grupo */
+function computeDesignAnchor(group: THREE.Group, side: DesignSide): DesignAnchor {
+  group.updateMatrixWorld(true);
+
+  const box = new THREE.Box3().setFromObject(group);
   const center = box.getCenter(new THREE.Vector3());
-  const position = new THREE.Vector3(center.x, center.y + box.getSize(new THREE.Vector3()).y * 0.08, box.max.z);
-  return { position, normal: new THREE.Vector3(0, 0, 1) };
+  const size = box.getSize(new THREE.Vector3());
+
+  const meshes: THREE.Mesh[] = [];
+  group.traverse((child) => {
+    if (child instanceof THREE.Mesh) meshes.push(child);
+  });
+
+  const chestY = center.y + size.y * 0.06;
+  const attempt =
+    side === "front"
+      ? {
+          origin: new THREE.Vector3(center.x, chestY, box.max.z + 0.35),
+          dir: new THREE.Vector3(0, 0, -1),
+          fallback: new THREE.Vector3(center.x, chestY, box.max.z),
+          fallbackNormal: new THREE.Vector3(0, 0, 1),
+        }
+      : {
+          origin: new THREE.Vector3(center.x, chestY, box.min.z - 0.35),
+          dir: new THREE.Vector3(0, 0, 1),
+          fallback: new THREE.Vector3(center.x, chestY, box.min.z),
+          fallbackNormal: new THREE.Vector3(0, 0, -1),
+        };
+
+  const raycaster = new THREE.Raycaster(attempt.origin, attempt.dir);
+  const hits = raycaster.intersectObjects(meshes, false);
+
+  let worldPoint: THREE.Vector3;
+  let worldNormal: THREE.Vector3;
+
+  if (hits.length > 0) {
+    worldPoint = hits[0].point.clone();
+    const faceNormal = hits[0].face?.normal ?? attempt.dir.clone().negate();
+    worldNormal = faceNormal.clone().transformDirection(hits[0].object.matrixWorld);
+  } else {
+    worldPoint = attempt.fallback.clone();
+    worldNormal = attempt.fallbackNormal.clone();
+  }
+
+  const invMatrix = new THREE.Matrix4().copy(group.matrixWorld).invert();
+  const position = worldPoint.applyMatrix4(invMatrix);
+  const normal = worldNormal.transformDirection(invMatrix).normalize();
+
+  return { position, normal };
+}
+
+export function computeDesignAnchors(group: THREE.Group): LoadedShirt["anchors"] {
+  return {
+    front: computeDesignAnchor(group, "front"),
+    back: computeDesignAnchor(group, "back"),
+  };
 }
 
 function normalizeModel(group: THREE.Group): void {
@@ -140,7 +195,7 @@ export function loadTShirtModel(garment: GarmentSettings): Promise<LoadedShirt> 
               group,
               bodyMesh,
               bodyMaterial: sharedMaterial,
-              chestAnchor: computeChestAnchor(bodyMesh),
+              anchors: computeDesignAnchors(group),
             });
           },
           undefined,

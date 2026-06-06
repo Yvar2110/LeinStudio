@@ -1,14 +1,13 @@
 import * as THREE from "three";
-import { DecalGeometry } from "three/examples/jsm/geometries/DecalGeometry.js";
 import type { DesignSettings, GarmentSettings } from "../types";
-import { loadTShirtModel, type LoadedShirt } from "./TShirtModelLoader";
+import { loadTShirtModel, type DesignAnchor, type LoadedShirt } from "./TShirtModelLoader";
 
 interface TShirtParts {
   group: THREE.Group;
   bodyMesh: THREE.Mesh;
   bodyMaterial: THREE.MeshPhysicalMaterial;
   designMesh: THREE.Mesh | null;
-  chestAnchor: LoadedShirt["chestAnchor"];
+  anchors: LoadedShirt["anchors"];
 }
 
 export function createTShirtModel(garment: GarmentSettings): Promise<TShirtParts> {
@@ -17,7 +16,7 @@ export function createTShirtModel(garment: GarmentSettings): Promise<TShirtParts
     bodyMesh: loaded.bodyMesh,
     bodyMaterial: loaded.bodyMaterial,
     designMesh: null,
-    chestAnchor: loaded.chestAnchor,
+    anchors: loaded.anchors,
   }));
 }
 
@@ -39,22 +38,43 @@ function removeDesignMesh(parts: TShirtParts): void {
   }
 }
 
-function buildFallbackDesignMesh(
+function alignToNormal(mesh: THREE.Mesh, normal: THREE.Vector3, rotationDeg: number): void {
+  const z = normal.clone().normalize();
+  let x = new THREE.Vector3(0, 1, 0).cross(z);
+  if (x.lengthSq() < 1e-6) {
+    x.set(1, 0, 0);
+  }
+  x.normalize();
+  const y = z.clone().cross(x).normalize();
+
+  mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+  mesh.rotateZ(THREE.MathUtils.degToRad(rotationDeg));
+}
+
+function getDesignAnchor(parts: TShirtParts, settings: DesignSettings): DesignAnchor {
+  return settings.side === "back" ? parts.anchors.back : parts.anchors.front;
+}
+
+function buildDesignMesh(
   parts: TShirtParts,
   texture: THREE.Texture,
   settings: DesignSettings
 ): THREE.Mesh {
+  const anchor = getDesignAnchor(parts, settings);
   const aspect = texture.image
     ? (texture.image as HTMLImageElement).width /
       (texture.image as HTMLImageElement).height
     : 1;
 
-  const w = 0.28 * settings.scale * Math.max(aspect, 0.5);
-  const h = 0.28 * settings.scale;
-  const geometry = new THREE.PlaneGeometry(w, h);
+  const base = 0.32 * settings.scale;
+  const width = base * Math.max(aspect, 0.45);
+  const height = base;
+
+  const geometry = new THREE.PlaneGeometry(width, height);
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
+    alphaTest: 0.02,
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -4,
@@ -62,78 +82,18 @@ function buildFallbackDesignMesh(
   });
 
   const mesh = new THREE.Mesh(geometry, material);
-  const pos = parts.chestAnchor.position.clone().add(
-    parts.chestAnchor.normal.clone().multiplyScalar(0.015)
-  );
-  pos.x += settings.offsetX;
-  pos.y += settings.offsetY;
+  mesh.name = "tshirt-design";
+  mesh.renderOrder = 20;
 
-  mesh.position.copy(pos);
-  mesh.lookAt(pos.clone().add(parts.chestAnchor.normal));
-  mesh.rotateZ(THREE.MathUtils.degToRad(settings.rotation));
-  mesh.renderOrder = 10;
+  const position = anchor.position.clone();
+  position.x += settings.offsetX;
+  position.y += settings.offsetY;
+  position.add(anchor.normal.clone().multiplyScalar(0.018));
+
+  mesh.position.copy(position);
+  alignToNormal(mesh, anchor.normal, settings.rotation);
+
   return mesh;
-}
-
-function buildDecalMesh(
-  parts: TShirtParts,
-  texture: THREE.Texture,
-  settings: DesignSettings
-): THREE.Mesh {
-  parts.bodyMesh.updateMatrixWorld(true);
-
-  try {
-    const position = parts.chestAnchor.position.clone();
-    position.add(parts.chestAnchor.normal.clone().multiplyScalar(0.012));
-    position.x += settings.offsetX;
-    position.y += settings.offsetY;
-
-    const target = position.clone().add(parts.chestAnchor.normal);
-    const orientMatrix = new THREE.Matrix4().lookAt(
-      position,
-      target,
-      new THREE.Vector3(0, 1, 0)
-    );
-    const orientation = new THREE.Euler().setFromRotationMatrix(orientMatrix);
-    orientation.z += THREE.MathUtils.degToRad(settings.rotation);
-
-    const baseSize = 0.3 * settings.scale;
-    const aspect = texture.image
-      ? (texture.image as HTMLImageElement).width /
-        (texture.image as HTMLImageElement).height
-      : 1;
-
-    const size = new THREE.Vector3(
-      baseSize * Math.max(aspect, 0.5),
-      baseSize,
-      0.22 * settings.scale
-    );
-
-    const decalGeo = new DecalGeometry(
-      parts.bodyMesh,
-      position,
-      orientation,
-      size
-    );
-
-    const material = new THREE.MeshPhysicalMaterial({
-      map: texture,
-      transparent: true,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -8,
-      roughness: 0.9,
-      metalness: 0,
-      side: THREE.DoubleSide,
-    });
-
-    const mesh = new THREE.Mesh(decalGeo, material);
-    mesh.renderOrder = 10;
-    mesh.name = "tshirt-design";
-    return mesh;
-  } catch {
-    return buildFallbackDesignMesh(parts, texture, settings);
-  }
 }
 
 export function applyDesignTexture(
@@ -149,7 +109,7 @@ export function applyDesignTexture(
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
 
-  parts.designMesh = buildDecalMesh(parts, texture, settings);
+  parts.designMesh = buildDesignMesh(parts, texture, settings);
   parts.group.add(parts.designMesh);
 }
 

@@ -32,7 +32,13 @@ export class TShirtScene {
   private constructor(container: HTMLElement, sceneSettings: SceneSettings) {
     this.container = container;
     this.sceneSettings = { ...sceneSettings };
-    this.designSettings = { offsetX: 0, offsetY: 0, scale: 0.55, rotation: 0 };
+    this.designSettings = {
+      side: "front",
+      offsetX: 0,
+      offsetY: 0,
+      scale: 0.99,
+      rotation: 0,
+    };
 
     const width = container.clientWidth;
     const height = container.clientHeight;
