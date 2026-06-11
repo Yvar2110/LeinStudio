@@ -8,6 +8,7 @@ export interface DesignSettings {
   offsetY: number;
   scale: number;
   rotation: number;
+  locked: boolean;
 }
 
 export interface DesignLayer {
@@ -44,6 +45,17 @@ export function createDefaultDesignSettings(): DesignSettings {
     offsetY: 0,
     scale: 0.55,
     rotation: 0,
+    locked: false,
+  };
+}
+
+export function normalizeDesignSettings(
+  settings: Partial<DesignSettings> & Omit<DesignSettings, "locked">
+): DesignSettings {
+  return {
+    ...createDefaultDesignSettings(),
+    ...settings,
+    locked: settings.locked ?? false,
   };
 }
 

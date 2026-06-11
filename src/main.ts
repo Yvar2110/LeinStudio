@@ -1,7 +1,7 @@
-import { StudioApp } from "./app/StudioApp";
+import { App } from "./app/App";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
 if (app) {
-  new StudioApp(app);
+  void App.create(app);
 }

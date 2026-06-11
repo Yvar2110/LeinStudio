@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="none"/>
+  <circle cx="200" cy="190" r="28" fill="#ec4899"/>
+  <circle cx="168" cy="160" r="22" fill="#f472b6" opacity="0.85"/>
+  <circle cx="232" cy="160" r="22" fill="#f472b6" opacity="0.85"/>
+  <circle cx="168" cy="220" r="22" fill="#f472b6" opacity="0.85"/>
+  <circle cx="232" cy="220" r="22" fill="#f472b6" opacity="0.85"/>
+  <text x="200" y="310" text-anchor="middle" font-family="system-ui,sans-serif" font-size="28" font-weight="600" fill="#8b2942">bloom</text>
+</svg>

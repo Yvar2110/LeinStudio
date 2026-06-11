@@ -3,10 +3,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { DesignSide, GarmentSettings } from "../types";
 
 const MODEL_URL = "/models/regular-tshirt.glb";
-const FABRIC_NORMAL =
-  "https://virtualthreads-app.nyc3.cdn.digitaloceanspaces.com/wiggle_bones_test2/t-shirt_normal.jpg";
-const FABRIC_ROUGHNESS =
-  "https://virtualthreads-app.nyc3.cdn.digitaloceanspaces.com/wiggle_bones_test2/t-shirt_roughness.jpg";
+const FABRIC_NORMAL = "/textures/t-shirt_normal.jpg";
+const FABRIC_ROUGHNESS = "/textures/t-shirt_roughness.jpg";
 
 export interface DesignAnchor {
   position: THREE.Vector3;

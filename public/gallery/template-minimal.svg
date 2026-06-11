@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="none"/>
+  <text x="200" y="210" text-anchor="middle" font-family="system-ui,sans-serif" font-size="72" font-weight="700" fill="#1a1a1a">LEIN</text>
+  <text x="200" y="260" text-anchor="middle" font-family="system-ui,sans-serif" font-size="18" font-weight="500" fill="#6b7280" letter-spacing="0.3em">STUDIO</text>
+</svg>

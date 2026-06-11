@@ -1,3 +1,4 @@
+import { persistMockup, type SavedMockup } from "../storage/designStorage";
 import { TShirtScene } from "../three/TShirtScene";
 import {
   createDefaultDesignSettings,
@@ -7,43 +8,43 @@ import {
   type DesignSettings,
   type StudioState,
 } from "../types";
+import { getDefaultActiveSettings, renderStudioShell } from "./studio/studioShell";
 
-const PRESET_COLORS = [
-  "#f5f5f0",
-  "#ffffff",
-  "#1a1a1a",
-  "#2d4a3e",
-  "#1e3a5f",
-  "#8b2942",
-  "#e8c547",
-  "#c4a484",
-  "#6b7280",
-  "#7c3aed",
-];
-
-const BG_PRESETS = [
-  { label: "Oscuro", value: "#1a1a22" },
-  { label: "Estudio", value: "#2a2a32" },
-  { label: "Blanco", value: "#f0f0f5" },
-  { label: "Azul", value: "#0f172a" },
-  { label: "Arena", value: "#d4c4a8" },
-];
-
+export interface StudioAppOptions {
+  initialState?: StudioState;
+  pendingFiles?: { id: string; file: File }[];
+  onClose?: () => void;
+  onSaved?: (mockup: SavedMockup) => void;
+}
 export class StudioApp {
   private root: HTMLElement;
-  private state: StudioState = structuredClone(DEFAULT_STATE);
+  private options: StudioAppOptions;
+  private state: StudioState;
   private scene: TShirtScene | null = null;
   private previewContainer!: HTMLElement;
   private designListEl!: HTMLElement;
   private uploadZoneEl!: HTMLElement;
   private designCountEl!: HTMLElement;
   private positionSectionEl!: HTMLElement;
+  private designImageData = new Map<string, string>();
+  private pendingFiles: { id: string; file: File }[] = [];
+  private destroyed = false;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, options: StudioAppOptions = {}) {
     this.root = root;
+    this.options = options;
+    this.state = structuredClone(options.initialState ?? DEFAULT_STATE);
+    this.pendingFiles = options.pendingFiles ?? [];
     this.render();
     this.bindEvents();
     this.initScene();
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.scene?.dispose();
+    this.scene = null;
+    this.root.innerHTML = "";
   }
 
   private getActiveDesign(): DesignLayer | null {
@@ -53,128 +54,13 @@ export class StudioApp {
 
   private render(): void {
     const active = this.getActiveDesign();
-    const activeSettings = active?.settings ?? createDefaultDesignSettings();
+    const activeSettings = active?.settings ?? getDefaultActiveSettings();
 
-    this.root.innerHTML = `
-      <div class="studio">
-        <header class="studio-header">
-          <div class="brand">
-            <div class="brand-mark">L</div>
-            <div>
-              <h1>Lein Studio</h1>
-              <p>Mockup 3D de camiseta regular</p>
-            </div>
-          </div>
-          <div class="header-actions">
-            <button type="button" class="btn btn-ghost" id="reset-camera">Reset cámara</button>
-            <button type="button" class="btn btn-ghost" id="export-video">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-              <span id="export-video-label">Descargar video</span>
-            </button>
-            <button type="button" class="btn btn-primary" id="export-png">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Exportar PNG
-            </button>
-          </div>
-        </header>
-
-        <main class="studio-main">
-          <aside class="panel panel-left">
-            <section class="panel-section">
-              <div class="section-header-row">
-                <h2>Diseños</h2>
-                <span class="design-count" id="design-count">0/${MAX_DESIGNS}</span>
-              </div>
-              <div class="upload-zone" id="upload-zone">
-                <input type="file" id="design-input" accept="image/png,image/jpeg,image/webp,image/svg+xml" multiple hidden />
-                <div class="upload-icon">
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                </div>
-                <p class="upload-title">Arrastra tus diseños aquí</p>
-                <p class="upload-sub">PNG, JPG, WEBP o SVG · hasta ${MAX_DESIGNS} imágenes</p>
-                <button type="button" class="btn btn-secondary btn-sm" id="browse-btn">Seleccionar archivos</button>
-              </div>
-              <div class="design-list" id="design-list"></div>
-              <button type="button" class="btn btn-ghost btn-sm btn-block" id="clear-designs" disabled>Quitar todos</button>
-            </section>
-
-            <section class="panel-section" id="position-section">
-              <h2>Posición del diseño</h2>
-              <p class="field-label">Ubicación</p>
-              <div class="side-toggle" id="design-side-toggle">
-                <button type="button" class="side-btn ${activeSettings.side === "front" ? "active" : ""}" data-side="front">Frente</button>
-                <button type="button" class="side-btn ${activeSettings.side === "back" ? "active" : ""}" data-side="back">Espalda</button>
-              </div>
-              ${this.sliderControl("offset-x", "Horizontal", -0.35, 0.35, 0.01, activeSettings.offsetX)}
-              ${this.sliderControl("offset-y", "Vertical", -0.3, 0.35, 0.01, activeSettings.offsetY)}
-              ${this.sliderControl("design-scale", "Escala", 0.2, 1.2, 0.01, activeSettings.scale)}
-              ${this.sliderControl("design-rotation", "Rotación", -180, 180, 1, activeSettings.rotation, "°")}
-              <p class="field-hint">También puedes arrastrar el diseño directamente en la vista 3D</p>
-            </section>
-          </aside>
-
-          <div class="viewport">
-            <div class="viewport-frame" id="preview-container"></div>
-            <div class="viewport-hint">
-              <span>Arrastra diseño para mover</span>
-              <span>·</span>
-              <span>Fondo para rotar</span>
-              <span>·</span>
-              <span>Rueda para zoom</span>
-            </div>
-          </div>
-
-          <aside class="panel panel-right">
-            <section class="panel-section">
-              <h2>Color de prenda</h2>
-              <div class="color-picker-row">
-                <input type="color" id="garment-color" value="${this.state.garment.color}" />
-                <input type="text" id="garment-hex" class="hex-input" value="${this.state.garment.color}" maxlength="7" />
-              </div>
-              <div class="color-presets" id="color-presets">
-                ${PRESET_COLORS.map(
-                  (c) =>
-                    `<button type="button" class="color-swatch" style="background:${c}" data-color="${c}" title="${c}"></button>`
-                ).join("")}
-              </div>
-              ${this.sliderControl("roughness", "Textura tela", 0.3, 1, 0.01, this.state.garment.roughness)}
-            </section>
-
-            <section class="panel-section">
-              <h2>Escena</h2>
-              <label class="toggle">
-                <input type="checkbox" id="auto-rotate" ${this.state.scene.autoRotate ? "checked" : ""} />
-                <span class="toggle-track"></span>
-                <span>Rotación automática</span>
-              </label>
-              <label class="toggle">
-                <input type="checkbox" id="wind-effect" ${this.state.scene.windEffect ? "checked" : ""} />
-                <span class="toggle-track"></span>
-                <span>Efecto viento</span>
-              </label>
-              <label class="toggle">
-                <input type="checkbox" id="show-grid" ${this.state.scene.showGrid ? "checked" : ""} />
-                <span class="toggle-track"></span>
-                <span>Mostrar rejilla</span>
-              </label>
-
-              <p class="field-label">Fondo</p>
-              <div class="bg-presets" id="bg-presets">
-                ${BG_PRESETS.map(
-                  (p) =>
-                    `<button type="button" class="bg-preset" data-bg="${p.value}" style="background:${p.value}" title="${p.label}"></button>`
-                ).join("")}
-              </div>
-              <div class="upload-zone upload-zone-sm" id="bg-upload-zone">
-                <input type="file" id="bg-input" accept="image/*" hidden />
-                <p>Fondo personalizado</p>
-                <button type="button" class="btn btn-secondary btn-sm" id="bg-browse">Subir imagen</button>
-              </div>
-            </section>
-          </aside>
-        </main>
-      </div>
-    `;
+    this.root.innerHTML = renderStudioShell(
+      this.state,
+      activeSettings,
+      !!this.options.onClose
+    );
 
     this.previewContainer = this.root.querySelector("#preview-container")!;
     this.designListEl = this.root.querySelector("#design-list")!;
@@ -183,26 +69,6 @@ export class StudioApp {
     this.positionSectionEl = this.root.querySelector("#position-section")!;
     this.refreshDesignListUI();
     this.updatePositionSectionState();
-  }
-
-  private sliderControl(
-    id: string,
-    label: string,
-    min: number,
-    max: number,
-    step: number,
-    value: number,
-    suffix = ""
-  ): string {
-    return `
-      <div class="control">
-        <div class="control-header">
-          <label for="${id}">${label}</label>
-          <output id="${id}-out">${value.toFixed(step < 1 ? 2 : 0)}${suffix}</output>
-        </div>
-        <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}" />
-      </div>
-    `;
   }
 
   private initScene(): void {
@@ -227,6 +93,7 @@ export class StudioApp {
           onDesignSelect: (id) => this.selectDesign(id, false),
         });
         this.scene.setDesignLayers(this.state.designs);
+        await this.loadPendingDesigns();
         this.previewContainer.querySelector(".viewport-loading")?.remove();
       } catch (error) {
         console.error(error);
@@ -378,6 +245,15 @@ export class StudioApp {
       this.scene?.setSceneSettings(this.state.scene);
     });
 
+    this.options.onClose &&
+      this.root.querySelector("#close-editor")!.addEventListener("click", () => {
+        this.options.onClose?.();
+      });
+
+    this.root.querySelector("#save-design")!.addEventListener("click", () => {
+      void this.saveDesign();
+    });
+
     this.root.querySelector("#reset-camera")!.addEventListener("click", () => {
       this.scene?.resetCamera();
     });
@@ -447,7 +323,7 @@ export class StudioApp {
 
   private updateActiveDesignSetting(partial: Partial<DesignSettings>): void {
     const active = this.getActiveDesign();
-    if (!active) return;
+    if (!active || active.settings.locked) return;
 
     Object.assign(active.settings, partial);
     this.scene?.updateDesign(active.id, active.settings);
@@ -455,9 +331,9 @@ export class StudioApp {
 
   private handleDesignDrag(id: string, settings: DesignSettings): void {
     const layer = this.state.designs.find((d) => d.id === id);
-    if (!layer) return;
+    if (!layer || layer.settings.locked) return;
 
-    layer.settings = { ...settings };
+    layer.settings = { ...settings, locked: layer.settings.locked };
     if (this.state.activeDesignId === id) {
       this.syncSlidersFromActiveDesign();
     }
@@ -499,12 +375,80 @@ export class StudioApp {
     });
   }
 
+  private async loadPendingDesigns(): Promise<void> {
+    if (!this.scene || this.pendingFiles.length === 0) return;
+
+    const files = [...this.pendingFiles];
+    this.pendingFiles = [];
+
+    for (const { id, file } of files) {
+      try {
+        await this.scene.loadDesignImage(id, file);
+        await this.cacheDesignImage(id, file);
+      } catch (error) {
+        console.error(error);
+        this.state.designs = this.state.designs.filter((d) => d.id !== id);
+        if (this.state.activeDesignId === id) {
+          this.state.activeDesignId = this.state.designs.at(-1)?.id ?? null;
+        }
+        this.scene.setDesignLayers(this.state.designs);
+      }
+    }
+
+    this.refreshDesignListUI();
+    this.syncSlidersFromActiveDesign();
+    this.updatePositionSectionState();
+  }
+
+  private async cacheDesignImage(id: string, file: File): Promise<void> {
+    const dataUrl = await this.fileToDataUrl(file);
+    this.designImageData.set(id, dataUrl);
+  }
+
+  private fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  private async saveDesign(): Promise<void> {
+    if (!this.scene || this.state.designs.length === 0) return;
+
+    const saveBtn = this.root.querySelector("#save-design") as HTMLButtonElement;
+    const originalText = saveBtn.textContent;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Guardando…";
+
+    try {
+      const thumbnail = this.scene.exportImage() ?? "";
+      const saved = await persistMockup(this.state, this.designImageData, thumbnail);
+      this.options.onSaved?.(saved);
+      saveBtn.textContent = "Guardado ✓";
+      setTimeout(() => {
+        if (!this.destroyed) {
+          saveBtn.textContent = originalText;
+          saveBtn.disabled = this.state.designs.length === 0;
+        }
+      }, 2000);
+    } catch (error) {
+      console.error(error);
+      alert("No se pudo guardar el diseño.");
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
+  }
+
   private refreshDesignListUI(): void {
     const clearBtn = this.root.querySelector("#clear-designs") as HTMLButtonElement;
+    const saveBtn = this.root.querySelector("#save-design") as HTMLButtonElement | null;
     const atMax = this.state.designs.length >= MAX_DESIGNS;
 
     this.designCountEl.textContent = `${this.state.designs.length}/${MAX_DESIGNS}`;
     clearBtn.disabled = this.state.designs.length === 0;
+    if (saveBtn) saveBtn.disabled = this.state.designs.length === 0;
     this.uploadZoneEl.classList.toggle("upload-zone-full", atMax);
 
     if (this.state.designs.length === 0) {
@@ -515,10 +459,19 @@ export class StudioApp {
     this.designListEl.innerHTML = this.state.designs
       .map(
         (d) => `
-        <div class="design-item ${d.id === this.state.activeDesignId ? "active" : ""}" data-id="${d.id}">
+        <div class="design-item ${d.id === this.state.activeDesignId ? "active" : ""} ${d.settings.locked ? "is-locked" : ""}" data-id="${d.id}">
           <button type="button" class="design-item-select" data-id="${d.id}">
             <span class="design-item-name">${this.escapeHtml(d.name)}</span>
-            <span class="design-item-side">${d.settings.side === "front" ? "Frente" : "Espalda"}</span>
+            <span class="design-item-side">${d.settings.side === "front" ? "Frente" : "Espalda"}${d.settings.locked ? " · Fijado" : ""}</span>
+          </button>
+          <button type="button" class="design-item-lock ${d.settings.locked ? "is-locked" : ""}" data-id="${d.id}" title="${d.settings.locked ? "Desfijar posición" : "Fijar posición"}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              ${
+                d.settings.locked
+                  ? `<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
+                  : `<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a3 3 0 0 0-6 0v3.76"/>`
+              }
+            </svg>
           </button>
           <button type="button" class="design-item-remove" data-id="${d.id}" title="Quitar">×</button>
         </div>
@@ -533,6 +486,14 @@ export class StudioApp {
       });
     });
 
+    this.designListEl.querySelectorAll(".design-item-lock").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = (btn as HTMLElement).dataset.id!;
+        this.toggleDesignLock(id);
+      });
+    });
+
     this.designListEl.querySelectorAll(".design-item-remove").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -542,12 +503,36 @@ export class StudioApp {
     });
   }
 
+  private toggleDesignLock(id: string): void {
+    const layer = this.state.designs.find((d) => d.id === id);
+    if (!layer) return;
+
+    layer.settings.locked = !layer.settings.locked;
+    this.scene?.updateDesign(id, layer.settings);
+    this.refreshDesignListUI();
+
+    if (this.state.activeDesignId === id) {
+      this.updatePositionSectionState();
+    }
+  }
+
   private updatePositionSectionState(): void {
-    const hasActive = !!this.getActiveDesign();
+    const active = this.getActiveDesign();
+    const hasActive = !!active;
+    const isLocked = active?.settings.locked ?? false;
+
     this.positionSectionEl.classList.toggle("is-disabled", !hasActive);
+    this.positionSectionEl.classList.toggle("is-locked", isLocked);
     this.positionSectionEl.querySelectorAll("input, button").forEach((el) => {
-      (el as HTMLInputElement).disabled = !hasActive;
+      (el as HTMLInputElement).disabled = !hasActive || isLocked;
     });
+
+    const hint = this.positionSectionEl.querySelector(".field-hint");
+    if (hint) {
+      hint.textContent = isLocked
+        ? "Diseño fijado — usa el candado en la lista para moverlo de nuevo"
+        : "También puedes arrastrar el diseño directamente en la vista 3D";
+    }
   }
 
   private escapeHtml(text: string): string {
@@ -598,6 +583,7 @@ export class StudioApp {
 
       try {
         await this.scene.loadDesignImage(id, file);
+        await this.cacheDesignImage(id, file);
       } catch (error) {
         console.error(error);
         this.state.designs = this.state.designs.filter((d) => d.id !== id);
@@ -613,6 +599,7 @@ export class StudioApp {
 
   private removeDesign(id: string): void {
     this.scene?.removeDesign(id);
+    this.designImageData.delete(id);
     this.state.designs = this.state.designs.filter((d) => d.id !== id);
 
     if (this.state.activeDesignId === id) {
@@ -627,6 +614,7 @@ export class StudioApp {
 
   private clearAllDesigns(): void {
     this.scene?.clearAllDesigns();
+    this.designImageData.clear();
     this.state.designs = [];
     this.state.activeDesignId = null;
     this.refreshDesignListUI();

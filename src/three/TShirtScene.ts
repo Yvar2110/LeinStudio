@@ -166,7 +166,7 @@ export class TShirtScene {
 
     const id = hit.object.userData.designId as string;
     const settings = this.getLayerSettings(id);
-    if (!settings) return;
+    if (!settings || settings.locked) return;
 
     event.preventDefault();
     this.renderer.domElement.setPointerCapture(event.pointerId);
@@ -185,7 +185,7 @@ export class TShirtScene {
     if (!this.isDragging || !this.draggingId || !this.parts) return;
 
     const settings = this.getLayerSettings(this.draggingId);
-    if (!settings) return;
+    if (!settings || settings.locked) return;
 
     this.updatePointer(event);
     this.raycaster.setFromCamera(this.pointer, this.camera);
